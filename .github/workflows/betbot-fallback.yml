@@ -31,6 +31,8 @@ jobs:
           prompt: |
             Führe die Fallback-Routine durch.
             Lies CLAUDE.md, Abschnitt "GitHub Actions: Stündlicher Fallback", und arbeite alle Schritte ab.
-          claude_args: "--max-turns 20"
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}

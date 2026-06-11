@@ -31,6 +31,8 @@ jobs:
           prompt: |
             Führe die tägliche Betbot-Routine durch.
             Lies CLAUDE.md, Abschnitt "GitHub Actions: Tägliche Auto-Tipps", und arbeite alle Schritte ab.
-          claude_args: "--max-turns 40"
+          claude_args: |
+            --max-turns 50
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
