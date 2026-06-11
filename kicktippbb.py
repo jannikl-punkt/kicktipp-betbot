@@ -150,17 +150,26 @@ def get_communities(browser: RoboBrowser, desired_communities: list):
     browser.open(URL_BASE + '/info/profil/meinetipprunden')
     content = get_kicktipp_content(browser)
     links = content.find_all('a')
-    def gethreftext(link): return link.get('href').replace("/", "")
+
+    def get_community_name(link):
+        href = link.get('href') or ''
+        if href.startswith(URL_BASE):
+            href = href[len(URL_BASE):]
+        return href.strip('/')
 
     def is_community(link):
-        hreftext = gethreftext(link)
-        if hreftext == link.get_text():
-            return True
-        else:
-            linkdiv = link.find('div', {'class': "menu-title-mit-tippglocke"})
-            return linkdiv and linkdiv.get_text() == hreftext
-    community_list = [gethreftext(link)
-                      for link in links if is_community(link)]
+        # Community links point to '/<name>' (a single path segment).
+        # Everything else ('/info/profil/...', anchors, external URLs) is navigation.
+        # The visible link text may differ from the URL slug, so only the href counts.
+        name = get_community_name(link)
+        return bool(re.fullmatch(r'[a-zA-Z0-9-]+', name)) and name != 'info'
+
+    community_list = []
+    for link in links:
+        if is_community(link):
+            name = get_community_name(link)
+            if name not in community_list:
+                community_list.append(name)
     if len(desired_communities) > 0:
         return intersection(community_list, desired_communities)
     return community_list
