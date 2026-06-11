@@ -130,3 +130,6 @@ dmypy.json
 
 #VSCode
 .vscode/
+
+# Betbot runtime files – werden von GitHub Actions generiert, nicht committen
+predictions.json
