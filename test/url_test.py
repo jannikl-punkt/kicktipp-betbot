@@ -12,7 +12,6 @@ def test_tippabgabeurl_with_matchday():
 
 def test_tippabgabeurl_matchday_oob():
     with pytest.raises(IndexError):
-        kicktippbb.get_tippabgabe_url('mycomm', 42)
+        kicktippbb.get_tippabgabe_url('mycomm', 101)
     with pytest.raises(IndexError):
         kicktippbb.get_tippabgabe_url('mycomm', 0)
-    
