@@ -108,19 +108,36 @@ def parse_match_rows(browser: RoboBrowser, community, matchday = None):
             'input', id=lambda x: x and x.endswith('_heimTipp'))
         gasttipp = row[3].find(
             'input', id=lambda x: x and x.endswith('_gastTipp'))
-        try:
-            odds=[odd.replace(" ","") for odd in row[4].get_text().split("/")]
-            match = Match(row[1].get_text(), row[2].get_text(), row[0].get_text(
-            ), odds[0], odds[1], odds[2])
-        except:
-            print("Error: Not enough data, maybe there are no rates yet.")
-            sys.exit()
+        rate_home, rate_deuce, rate_road = parse_odds(row)
+        match = Match(row[1].get_text(), row[2].get_text(),
+                      row[0].get_text(), rate_home, rate_deuce, rate_road)
         if not match.match_date:
             match.match_date = lastmatch.match_date
         lastmatch = match
         matchtuple.append((heimtipp, gasttipp, match))
 
     return matchtuple
+
+
+def parse_odds(row):
+    """Extract the three betting odds (home/draw/road) from a match row.
+
+    Kicktipp renders odds as <span class="quote-text"> elements inside the
+    odds column. Some communities (e.g. tournament rounds like the World Cup)
+    provide no odds at all. Odds are only consumed by the CalculationPredictor,
+    so when they are missing or unparseable we return neutral values instead of
+    aborting, which keeps the FixedPredictor working everywhere.
+    """
+    quotes = [span.get_text(strip=True)
+              for cell in row
+              for span in cell.find_all('span', class_='quote-text')]
+    if len(quotes) >= 3:
+        try:
+            float(quotes[0]), float(quotes[1]), float(quotes[2])
+            return quotes[0], quotes[1], quotes[2]
+        except ValueError:
+            pass
+    return "0", "0", "0"
 
 def get_tippabgabe_url(community, matchday = None):
     tippabgabeurl = URL_BASE + '/' + community + '/tippabgabe'
