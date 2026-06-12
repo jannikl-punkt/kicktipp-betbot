@@ -30,8 +30,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Kein prompt: claude-code-action liest den @claude-Kommentar automatisch.
           # Kontext aus CLAUDE.md (Abschnitt "Interaktive Anpassungen") wird genutzt.
-          claude_args: |
-            --max-turns 30
-            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
+          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
+          claude_args: "--max-turns 30"
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
