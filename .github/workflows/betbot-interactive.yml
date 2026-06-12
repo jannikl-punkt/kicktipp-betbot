@@ -31,7 +31,7 @@ jobs:
       # Der Kommentartext wird injection-sicher per Env-Variable übergeben.
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Ein Nutzer hat einen @claude-Kommentar in GitHub Issue #${{ github.event.issue.number }} geschrieben.
             Der Kommentartext steht in der Umgebungsvariable COMMENT_BODY (lesen per: echo "$COMMENT_BODY").
