@@ -29,6 +29,7 @@ import sys
 import datetime
 import getpass
 import re
+from urllib.parse import urlparse
 
 from docopt import docopt
 from robobrowser import RoboBrowser
@@ -151,25 +152,26 @@ def get_communities(browser: RoboBrowser, desired_communities: list):
     content = get_kicktipp_content(browser)
     links = content.find_all('a')
 
-    def get_community_name(link):
-        href = link.get('href') or ''
-        if href.startswith(URL_BASE):
-            href = href[len(URL_BASE):]
-        return href.strip('/')
+    _SYSTEM_SLUGS = {'info', 'favicon.ico'}
 
-    def is_community(link):
-        # Community links point to '/<name>' (a single path segment).
-        # Everything else ('/info/profil/...', anchors, external URLs) is navigation.
-        # The visible link text may differ from the URL slug, so only the href counts.
-        name = get_community_name(link)
-        return bool(re.fullmatch(r'[a-zA-Z0-9-]+', name)) and name != 'info'
+    def _community_slug(link):
+        """Return the community slug if this link points to a community root page, else ''."""
+        href = link.get('href') or ''
+        # Skip non-HTTP hrefs: javascript:, mailto:, #anchors, empty
+        if not (href.startswith('/') or href.startswith('http://') or href.startswith('https://')):
+            return ''
+        path = urlparse(href).path          # handles relative /slug/ and absolute http(s)://…/slug/
+        parts = [p for p in path.split('/') if p]
+        # Community root links have exactly one path segment; /info/profil/… has more
+        if len(parts) != 1:
+            return ''
+        return '' if parts[0] in _SYSTEM_SLUGS else parts[0]
 
     community_list = []
     for link in links:
-        if is_community(link):
-            name = get_community_name(link)
-            if name not in community_list:
-                community_list.append(name)
+        slug = _community_slug(link)
+        if slug and slug not in community_list:
+            community_list.append(slug)
     if len(desired_communities) > 0:
         return intersection(community_list, desired_communities)
     return community_list
