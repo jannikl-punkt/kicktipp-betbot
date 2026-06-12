@@ -12,8 +12,8 @@ permissions:
 
 jobs:
   interactive:
-    # Nur auf @claude-Erwähnungen reagieren
-    if: contains(github.event.comment.body, '@claude')
+    # Nur auf @claude-Erwähnungen von Menschen reagieren (nicht auf Bot-Kommentare)
+    if: contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,12 +25,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Explizites prompt => Agent-Modus statt Tag-Modus.
+      # Der Tag-Modus von claude-code-action@v1 ignoriert --allowedTools
+      # (Bash/WebSearch bleiben gesperrt) und crasht aktuell beim Start.
+      # Der Kommentartext wird injection-sicher per Env-Variable übergeben.
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Kein prompt: claude-code-action liest den @claude-Kommentar automatisch.
-          # Kontext aus CLAUDE.md (Abschnitt "Interaktive Anpassungen") wird genutzt.
-          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
-          claude_args: "--max-turns 30"
+          prompt: |
+            Ein Nutzer hat einen @claude-Kommentar in GitHub Issue #${{ github.event.issue.number }} geschrieben.
+            Der Kommentartext steht in der Umgebungsvariable COMMENT_BODY (lesen per: echo "$COMMENT_BODY").
+            Lies CLAUDE.md, Abschnitt "Interaktive Anpassungen (@claude Kommentare)", und führe die Anfrage aus.
+            Poste deine Antwort am Ende als Issue-Kommentar:
+            gh issue comment ${{ github.event.issue.number }} --body "<deine antwort>"
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
