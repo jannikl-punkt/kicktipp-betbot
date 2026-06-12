@@ -51,6 +51,18 @@ python kicktippbb.py --list-predictors
 
 **Wichtig**: Teamnamen exakt so verwenden wie sie im Dry-Run-Output erscheinen.
 
+## Tipp-Formate
+
+Es gibt zwei Community-Typen, die der Bot automatisch erkennt:
+
+**Ergebnis-Tipp** (Standard): Zwei Felder (`heimTipp` + `gastTipp`), z. B. `2:1`.
+`predictions.json`-Eintrag: `"Deutschland - Frankreich": [2, 1]`
+
+**Tendenz-Tipp (1X2)**: Nur ein Feld (`heimTipp`), erlaubte Werte: `1` (Heimsieg), `X` (Unentschieden), `2` (Auswärtssieg).
+Beispiel: `oddset-wm-tipp`. Das Skript leitet die Tendenz automatisch aus dem vorhergesagten Ergebnis ab:
+- `[2, 1]` → `1`, `[1, 1]` → `X`, `[0, 2]` → `2`
+`predictions.json`-Eintrag bleibt identisch: `"USA - Paraguay": [2, 0]` (→ wird zu `1` umgerechnet).
+
 ---
 
 ## GitHub Actions: Tägliche Auto-Tipps
