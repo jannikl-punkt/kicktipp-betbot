@@ -15,7 +15,7 @@ predictions.json       – Tipps (Laufzeit-Artefakt, nicht eingecheckt)
 .github/workflows/
   betbot-auto.yml      – Auto-Tipps ~2h vor Anstoß (Heartbeat)
   betbot-fallback.yml  – Fallback ~30 Min vor Anstoß (Heartbeat)
-  betbot-results.yml   – Tägliche Spieltag-Zusammenfassung mit Ergebnissen
+  betbot-results.yml   – Täglicher Tagesbericht (Ausblick + Rückblick)
   betbot-interactive.yml – @claude-Kommentare im Issue
 ```
 
@@ -116,15 +116,20 @@ Jitter-Puffer) und tippt **nur**, wo Jannik noch keinen Tipp gesetzt hat (**kein
 
 Gleicher 4-Schritt-Ablauf wie oben, aber Deadline `40m` und feste Community-Liste.
 
-## GitHub Actions: Spieltag-Zusammenfassung (`betbot-results.yml`)
+## GitHub Actions: Tagesbericht (`betbot-results.yml`)
 
-Läuft täglich um 0:30 CEST (22:30 UTC). Claude ruft die kicktipp-Ergebnisseiten
-auf, vergleicht mit den Bot-Tipps (predictions.json) und postet eine
-Zusammenfassung ins `betbot-report`-Issue.
+Läuft täglich um 08:00 CEST (06:00 UTC) und postet **einen** zusammenhängenden
+Tagesbericht ins `betbot-report`-Issue – immer mit beiden Teilen:
 
-- Ergebnisseite einer Community: `http://www.kicktipp.de/{community}/`
+1. **🔮 Ausblick** – alle offenen Spiele des aktuellen Spieltags samt aktuell
+   gesetzter Bot-Tipps (inkl. Kurzbegründung aus `predictions.json`, falls vorhanden).
+   Erscheint **immer**, auch wenn es im Rückblick nichts Neues gibt.
+2. **📊 Rückblick** – seit dem letzten Bericht abgepfiffene Spiele: Ergebnis vs.
+   Bot-Tipp mit Treffer-Markierung (✅ exakt / 🟡 Tendenz / ❌ daneben).
+
+- Ergebnis-/Spielseite einer Community: `http://www.kicktipp.de/{community}/`
 - Login per Cookie: `requests.get(..., cookies={"login": os.environ["KICKTIPP_TOKEN"]})`
-- Nur posten wenn tatsächlich Ergebnisse vorliegen (kein leerer Kommentar).
+- Reiner Lese-/Berichtslauf – es wird nichts getippt.
 - Manuell per workflow_dispatch auslösbar.
 
 ---
