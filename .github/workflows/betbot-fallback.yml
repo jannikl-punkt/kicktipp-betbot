@@ -1,4 +1,4 @@
-name: Betbot – Fallback (~30 Min vor Anstoß, nur acmilfhunters172 & svawm)
+name: Betbot – Fallback (~30 Min vor Anstoß)
 
 # Gleiche Heartbeat-Architektur wie betbot-auto, aber nur für die Gruppen, in
 # denen Jannik selbst tippt. Der Bot springt nur ein, wenn ~30 Min vor Anstoß

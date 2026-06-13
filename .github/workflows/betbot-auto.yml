@@ -15,6 +15,11 @@ permissions:
   issues: write
   id-token: write
 
+# Fallback-Gruppen werden beim Auto-Tippen AUSGESCHLOSSEN (die tippen via betbot-fallback.yml).
+# Muss synchron mit dem FALLBACK_COMMUNITIES env in betbot-fallback.yml gehalten werden.
+env:
+  FALLBACK_COMMUNITIES: "acmilfhunters172 svawm"
+
 jobs:
   auto-bet:
     runs-on: ubuntu-latest
@@ -38,9 +43,10 @@ jobs:
           OUT=$(python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" \
                   --predictor FixedPredictor --deadline 2h) || { echo "$OUT"; exit 1; }
           echo "$OUT"
-          COMMS=$(echo "$OUT" | awk '
+          COMMS=$(echo "$OUT" | awk -v fc="$FALLBACK_COMMUNITIES" '
+            BEGIN { n=split(fc,fca," "); for(i=1;i<=n;i++) excl[fca[i]]=1 }
             /^Community: /{c=$2; next}
-            / - betting [0-9X]/{ if (c!="acmilfhunters172" && c!="svawm" && !seen[c]++) print c }
+            / - betting [0-9X]/{ if (!(c in excl) && !seen[c]++) print c }
           ' | tr "\n" " " | sed "s/ *$//")
           echo "communities=$COMMS" >> "$GITHUB_OUTPUT"
           if [ -n "$COMMS" ]; then

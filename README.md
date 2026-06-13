@@ -55,7 +55,8 @@ Claude nur kurz (Recherche statt Voll-Orchestrierung).
 | Workflow | Trigger | Zweck |
 |----------|---------|-------|
 | `betbot-auto.yml` | alle 30 Min | Tippt Auto-Communities **~2h vor Anstoß** (frische Daten). Schließt die Fallback-Gruppen aus. |
-| `betbot-fallback.yml` | alle 15 Min | Tippt nur `acmilfhunters172` & `svawm` **~30 Min vor Anstoß**, und nur falls noch kein eigener Tipp existiert (kein Override). |
+| `betbot-fallback.yml` | alle 15 Min | Tippt nur Fallback-Gruppen **~30 Min vor Anstoß**, und nur falls noch kein eigener Tipp existiert (kein Override). |
+| `betbot-results.yml` | täglich 08:00 CEST | Postet einen **Tagesbericht** (🔮 Ausblick auf den Spieltag + 📊 Rückblick auf die Ergebnisse) im betbot-report Issue. |
 | `betbot-interactive.yml` | `@claude`-Kommentar im Issue | Manuelle Anpassungen/Fragen (voller Agent-Modus). |
 
 Die **Anstoßzeiten** holt sich jeder Lauf live aus dem Dry-Run; das `--deadline`-Fenster

@@ -1,0 +1,122 @@
+name: Betbot – Tagesbericht (Ausblick & Rückblick)
+
+# Läuft täglich morgens (08:00 CEST / 06:00 UTC). Claude erstellt EINEN
+# zusammenhängenden Tagesbericht und postet ihn ins betbot-report Issue:
+#   1. 🔮 Ausblick  – alle Spiele des aktuellen Spieltags + aktuelle Bot-Tipps
+#   2. 📊 Rückblick – seit dem letzten Bericht abgepfiffene Spiele: Ergebnis vs. Bot-Tipp
+# Manuell per workflow_dispatch auslösbar.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+# Muss synchron mit dem FALLBACK_COMMUNITIES env in den anderen Workflows bleiben.
+env:
+  FALLBACK_COMMUNITIES: "acmilfhunters172 svawm"
+
+jobs:
+  tagesbericht:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Gate (reines Python): Login prüfen und Community-Liste ermitteln.
+      # Bricht bei Login-Fehler ab, bevor Claude startet.
+      - id: gate
+        name: Gate – Login prüfen & Communities ermitteln
+        env:
+          KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
+        run: |
+          set -o pipefail
+          OUT=$(python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" \
+                  --predictor FixedPredictor 2>&1) || { echo "$OUT"; exit 1; }
+          COMMS=$(echo "$OUT" | awk '/^Community: /{print $2}' | tr "\n" " " | sed "s/ *$//")
+          if [ -n "$COMMS" ]; then
+            echo "work=true"  >> "$GITHUB_OUTPUT"
+            echo "communities=$COMMS" >> "$GITHUB_OUTPUT"
+          else
+            echo "work=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Keine Communities gefunden – Tagesbericht wird übersprungen."
+          fi
+
+      # Claude: Ausblick + Rückblick erstellen und als EINEN Kommentar posten.
+      - if: steps.gate.outputs.work == 'true'
+        name: Tagesbericht erstellen und posten
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Erstelle EINEN zusammenhängenden Markdown-Tagesbericht zum aktuellen Spieltag
+            und poste ihn als EINEN Kommentar im betbot-report Issue (#${{ github.event.issue.number || 0 }} ggf. selbst suchen).
+
+            Alle Communities: ${{ steps.gate.outputs.communities }}
+            Fallback-Communities (Jannik tippt selbst): $FALLBACK_COMMUNITIES
+            Alle übrigen sind Auto-Communities (Bot tippt vollständig).
+
+            ── Daten holen (live, mit Login-Cookie) ──
+            - Aktuelle Tipps/Spiele je Community (Dry-Run):
+                python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor
+            - Ergebnisse/abgepfiffene Spiele je Community von der Seite
+                http://www.kicktipp.de/{community}/  (Login-Cookie nötig), z. B. per Python:
+                ```python
+                import os, requests
+                from bs4 import BeautifulSoup
+                r = requests.get("http://www.kicktipp.de/{community}/",
+                                 cookies={"login": os.environ["KICKTIPP_TOKEN"]})
+                soup = BeautifulSoup(r.text, "html5lib")
+                ```
+                Falls predictions.json existiert, daraus die Kurzbegründungen übernehmen.
+
+            ── Berichtsformat (GENAU so aufbauen) ──
+            ## 🏆 Betbot Tagesbericht – <DD.MM.YYYY>
+
+            ### 🔮 Ausblick – Spieltag <N>
+            Tabelle mit ALLEN noch offenen Spielen des aktuellen Spieltags:
+            | Spiel | Anstoß | Tipp | Kurzbegründung |
+            (Tipp = aktuell gesetzter Bot-Tipp, z. B. `2:1` bzw. `X (1:1)` bei 1X2-Communities
+             wie oddset-wm-tipp. Begründung aus predictions.json, sonst max. 1 knapper Satz.)
+            Wenn für ein Spiel noch kein Tipp gesetzt ist, "–" eintragen.
+
+            ### 📊 Rückblick – abgepfiffene Spiele
+            Tabelle mit den seit dem letzten Bericht beendeten Spielen:
+            | Spiel | Ergebnis | Bot-Tipp | Treffer |
+            (Treffer: ✅ exakt, 🟡 Tendenz richtig, ❌ daneben – wenn Punkte sichtbar sind, diese angeben.)
+            Falls keine neuen Ergebnisse vorliegen: "_Keine neuen Ergebnisse seit dem letzten Bericht._"
+
+            ### Communities
+            **Auto:** <Liste>   **Fallback:** <Liste>
+            (kurz vermerken, welche ruhen/kein Tippfenster haben)
+
+            ### Hinweise
+            Auffälligkeiten in knappen Stichpunkten (Verletzungen, geschlossene Tippfenster,
+            1X2-Besonderheiten, Bugs). Wenn nichts: weglassen.
+
+            ── Posten ──
+            ISSUE=$(gh issue list --label betbot-report --state all --json number --jq '.[0].number // empty')
+            if [ -z "$ISSUE" ]; then
+              URL=$(gh issue create --title "🤖 Betbot Tagesberichte" --label betbot-report \
+                      --body "Automatische Tipp-Berichte des Betbots.")
+              ISSUE=$(basename "$URL")
+            fi
+            gh issue comment "$ISSUE" --body "<bericht>"
+
+            Wichtig: NICHT tippen, NICHTS am Account ändern – reiner Lese-/Berichtslauf.
+            Immer einen Ausblick für den aktuellen Spieltag zeigen, auch wenn keine neuen
+            Ergebnisse für den Rückblick vorliegen.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
+        env:
+          KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          FALLBACK_COMMUNITIES: ${{ env.FALLBACK_COMMUNITIES }}
