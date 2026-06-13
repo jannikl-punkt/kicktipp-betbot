@@ -6,12 +6,35 @@ Der Bot gibt Tipps auf Basis von KI-Recherche (aktuelle Form, Verletzungen, Head
 ## Projektstruktur
 
 ```
-kicktippbb.py          – Haupt-CLI
+kicktippbb.py          – Haupt-CLI (Login, Parsing, Deadline-Fenster, Tippen)
+betbot_report.py       – Rendert predictions.json zu einem Markdown-Bericht
 predictors/
   fixedpredictor.py   – Liest predictions.json (Haupt-Predictor für Actions)
   calculationpredictor.py – Fallback auf Basis von Quoten
-predictions.json       – Tipps: {"Heimteam - Gastteam": [heim_tore, gast_tore]}
+predictions.json       – Tipps (Laufzeit-Artefakt, nicht eingecheckt)
+.github/workflows/
+  betbot-auto.yml      – Auto-Tipps ~2h vor Anstoß (Heartbeat)
+  betbot-fallback.yml  – Fallback ~30 Min vor Anstoß (Heartbeat)
+  betbot-interactive.yml – @claude-Kommentare im Issue
 ```
+
+## Architektur der geplanten Läufe (wichtig)
+
+Auto- und Fallback-Workflow folgen demselben **Heartbeat-Muster**. Ein günstiger
+Cron-Tick prüft per **reinem Python**, ob ein Spiel ins Zeitfenster rutscht – und
+startet Claude **nur dann**. Claude macht **ausschließlich die Recherche**; alles
+Deterministische ist gescriptet:
+
+1. **Gate** (Bash/Python, kein Claude): `kicktippbb.py --dry-run --deadline <X>` →
+   sucht `- betting`-Zeilen = tippbare, noch ungetippte Spiele im Fenster.
+   Kein Treffer → Lauf endet, **null Abo-Verbrauch**.
+2. **Recherche** (Claude/Abo, nur bei Treffer): schreibt **nur** `predictions.json`
+   (kein Tippen, kein Posten). Auftrag kommt aus dem Workflow-`prompt`.
+3. **Tippen** (reines Python): `kicktippbb.py --predictor FixedPredictor --deadline <X>`.
+4. **Report** (Bash/`gh`): `betbot_report.py` → Kommentar im `betbot-report`-Issue.
+
+Deshalb ist Claude in den geplanten Läufen **kein** Orchestrator mehr – nur ein
+Recherche-Dienst. Diese CLAUDE.md steuert primär die **interaktiven** `@claude`-Läufe.
 
 ## Wichtige Befehle
 
@@ -41,96 +64,55 @@ python kicktippbb.py --list-predictors
 
 ## predictions.json Format
 
+Zwei Wertformate pro Spiel sind erlaubt (beide werden vom FixedPredictor gelesen):
+
 ```json
 {
   "Deutschland - Frankreich": [2, 1],
-  "Bayern München - Borussia Dortmund": [3, 1],
-  "Brasilien - Argentinien": [1, 2]
+  "Katar - Schweiz": {"tip": [0, 2], "reason": "Schweiz klar überlegen"}
 }
 ```
 
+Das `reason`-Feld ist optional und wird nur vom Report genutzt. In den geplanten
+Läufen schreibt Claude bevorzugt das `{"tip": ..., "reason": ...}`-Format, damit der
+Bericht eine Begründung zeigen kann.
+
 **Wichtig**: Teamnamen exakt so verwenden wie sie im Dry-Run-Output erscheinen.
 
----
+## Tipp-Formate
 
-## GitHub Actions: Tägliche Auto-Tipps
+Es gibt zwei Community-Typen, die der Bot automatisch erkennt:
 
-Läuft täglich um 08:00 CEST. Tippt alle Auto-Communities vollständig.
+**Ergebnis-Tipp** (Standard): Zwei Felder (`heimTipp` + `gastTipp`), z. B. `2:1`.
+`predictions.json`-Eintrag: `"Deutschland - Frankreich": [2, 1]`
 
-### Ablauf
-
-1. **Dry-Run aller Communities** (keine Community-Angabe = alle):
-   ```bash
-   python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN"
-   ```
-
-2. **Fallback-Communities herausfiltern**: `acmilfhunters172`, `svawm` aus der Liste entfernen.
-   Falls keine Auto-Communities übrig bleiben: direkt zu Schritt 6 (nur Bericht).
-
-3. **Pro anstehendem Spiel** (nur Spiele von heute und morgen):
-   - Kurze Web-Recherche: aktuelle Form beider Teams, Verletzungen, Head-to-Head
-   - Kontext: WM 2026, Gruppenphase oder K.o.-Runde beachten
-
-4. **predictions.json schreiben** mit den recherchierten Tipps.
-   Begründung pro Spiel notieren (für Bericht).
-
-5. **Tipps abgeben**:
-   ```bash
-   python kicktippbb.py --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor <auto-communities...>
-   ```
-
-6. **Tagesbericht** als Kommentar im GitHub Issue mit Label `betbot-report` posten.
-   Falls kein solches Issue existiert: neues Issue erstellen mit Titel
-   "🤖 Betbot Tagesberichte" und Label `betbot-report`.
-   ```bash
-   gh issue list --label betbot-report --json number --jq '.[0].number'
-   gh issue create --title "🤖 Betbot Tagesberichte" --label betbot-report --body "Tägliche Tipp-Berichte des Betbots."
-   gh issue comment <nummer> --body "<bericht>"
-   ```
-
-### Bericht-Format
-
-```markdown
-## 🏆 Betbot Tagesbericht – TT.MM.YYYY
-
-### Getippte Spiele (Auto-Communities)
-| Spiel | Tipp | Kurzbegründung |
-|-------|------|----------------|
-| Deutschland vs Frankreich | 2:1 | DE starke Heimform; FR ohne Mbappé |
-
-### Communities
-Auto: [liste oder "keine – noch nicht konfiguriert"]
-
-### Hinweise
-[Fehler, fehlende Quoten, etc. – sonst weglassen]
-```
+**Tendenz-Tipp (1X2)**: Nur ein Feld (`heimTipp`), erlaubte Werte: `1` (Heimsieg), `X` (Unentschieden), `2` (Auswärtssieg).
+Beispiel: `oddset-wm-tipp`. Das Skript leitet die Tendenz automatisch aus dem vorhergesagten Ergebnis ab:
+- `[2, 1]` → `1`, `[1, 1]` → `X`, `[0, 2]` → `2`
+`predictions.json`-Eintrag bleibt identisch: `"USA - Paraguay": [2, 0]` (→ wird zu `1` umgerechnet).
 
 ---
 
-## GitHub Actions: Stündlicher Fallback
+## GitHub Actions: Auto-Tipps (`betbot-auto.yml`)
 
-Läuft stündlich für `acmilfhunters172` und `svawm`.
-Tippt **nur** Spiele die innerhalb der nächsten Stunde beginnen **und** noch keinen Tipp haben.
+Heartbeat alle 30 Min. Tippt jedes Auto-Community-Spiel **~2h vor Anstoß** mit
+frischer Recherche (Aufstellungen/News sind dann aktueller als morgens).
 
-### Ablauf
+- **Gate** (Python): `kicktippbb.py --dry-run --deadline 2h` über alle Communities;
+  per `awk` werden die Fallback-Gruppen (`acmilfhunters172`, `svawm`) ausgeschlossen
+  und die betroffenen Auto-Communities gesammelt. Kein Treffer → Ende.
+- **Recherche** (Claude/Abo, nur bei Treffer): laut Workflow-`prompt` nur
+  `predictions.json` schreiben – kein Tippen, kein Posten.
+- **Tippen** (Python): `kicktippbb.py --predictor FixedPredictor --deadline 2h <auto-communities>`.
+- **Report** (`betbot_report.py` + `gh`): Kommentar im `betbot-report`-Issue.
 
-1. **Dry-Run mit Deadline-Check**:
-   ```bash
-   python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --deadline 1h acmilfhunters172 svawm
-   ```
-   Falls der Output "no bets possible" oder "not betting yet" für alle Spiele zeigt: fertig, keine Aktion.
+## GitHub Actions: Fallback (`betbot-fallback.yml`)
 
-2. **Pro Spiel in den nächsten 60 Minuten**: schnelle Web-Recherche (Form, Aufstellung).
+Heartbeat alle 15 Min, nur `acmilfhunters172` und `svawm`. Springt **~30 Min vor
+Anstoß** ein (Fenster 40m als Jitter-Puffer) und tippt **nur**, wo Jannik noch
+keinen Tipp gesetzt hat (**kein** `--override-bets`).
 
-3. **predictions.json schreiben**.
-
-4. **Tipps abgeben**:
-   ```bash
-   python kicktippbb.py --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor --deadline 1h acmilfhunters172 svawm
-   ```
-   (Kein `--override-bets` – bereits gesetzte Tipps von Jannik bleiben erhalten!)
-
-5. Falls Tipps gesetzt wurden: kurzen Kommentar im betbot-report Issue posten.
+Gleicher 4-Schritt-Ablauf wie oben, aber Deadline `40m` und feste Community-Liste.
 
 ---
 

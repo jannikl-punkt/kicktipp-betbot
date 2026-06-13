@@ -14,6 +14,77 @@ Motivation
 
 I sometimes forget to place bets for the upcomming matchday. Therefore I wanted to create a 'simple' tool that places bets on the matchday right before the deadline. In conjunction with a raspberry pi server this tool should continously check whether i placed the current matchdays bets and in case i didn't it should place them automatically for me.
 
+Automatisierung via GitHub Actions (dieser Fork)
+------------------------------------------------
+
+Dieser Fork erweitert das CLI-Tool zu einem **vollautomatischen, KI-gestützten
+Tipp-System**, das ohne eigenen Server allein über GitHub Actions läuft. Die
+KI-Recherche (Form, Verletzungen, Aufstellungen, Head-to-Head) liefert Claude;
+das Platzieren der Tipps macht weiterhin das deterministische Python-CLI.
+
+### Grundprinzip: günstig durch Trennung von Recherche und Mechanik
+
+Alles Deterministische (Login, Parsing, Zeitfenster, Formular absenden, Bericht)
+ist hartes Python. Claude wird **nur für die eigentliche Recherche** gebraucht –
+und auch nur dann, wenn wirklich ein Spiel ansteht. Ein billiger „Heartbeat"-Tick
+entscheidet per Python, ob Claude überhaupt starten muss:
+
+```
+Cron-Tick (alle 15–30 Min)
+   │
+   ▼
+1. GATE  ── reines Python: kicktippbb.py --dry-run --deadline <fenster>
+   │        Gibt es ein tippbares, noch ungetipptes Spiel im Fenster?
+   │
+   ├── nein ─► Ende.  (keine Claude-Nutzung)
+   │
+   └── ja ─►  2. RECHERCHE ── Claude (Abo-Token), NUR predictions.json schreiben
+                    │
+                    ▼
+              3. TIPPEN ──── reines Python: kicktippbb.py --predictor FixedPredictor
+                    │
+                    ▼
+              4. REPORT ──── betbot_report.py + gh → Kommentar im Issue
+```
+
+So fällt bei Leerlauf-Ticks **kein** KI-Verbrauch an, und wenn getippt wird, läuft
+Claude nur kurz (Recherche statt Voll-Orchestrierung).
+
+### Die drei Workflows
+
+| Workflow | Trigger | Zweck |
+|----------|---------|-------|
+| `betbot-auto.yml` | alle 30 Min | Tippt Auto-Communities **~2h vor Anstoß** (frische Daten). Schließt die Fallback-Gruppen aus. |
+| `betbot-fallback.yml` | alle 15 Min | Tippt nur `acmilfhunters172` & `svawm` **~30 Min vor Anstoß**, und nur falls noch kein eigener Tipp existiert (kein Override). |
+| `betbot-interactive.yml` | `@claude`-Kommentar im Issue | Manuelle Anpassungen/Fragen (voller Agent-Modus). |
+
+Die **Anstoßzeiten** holt sich jeder Lauf live aus dem Dry-Run; das `--deadline`-Fenster
+sorgt dafür, dass ein Spiel beim ersten passenden Tick getippt wird. Das ist robuster
+als feste Einzeltermine, weil GitHubs Cron oft um Minuten verzögert.
+
+### Bausteine
+
+- **`kicktippbb.py`** – CLI: Login per Token, Communities dynamisch ermitteln,
+  Spiele parsen, Deadline-Fenster, Tipps absenden. Erkennt automatisch
+  **Ergebnis-Tipps** (`heimTipp`+`gastTipp`, z. B. `2:1`) und **Tendenz-Tipps**
+  (1X2: nur `heimTipp` mit `1`/`X`/`2`, z. B. `oddset-wm-tipp`).
+- **`predictors/fixedpredictor.py`** – liest `predictions.json`; fehlt ein Spiel,
+  fällt er auf `CalculationPredictor` (quotenbasiert) zurück.
+- **`predictions.json`** – Laufzeit-Artefakt (nicht eingecheckt). Format je Spiel:
+  `[heim, gast]` **oder** `{"tip": [heim, gast], "reason": "..."}`.
+- **`betbot_report.py`** – rendert `predictions.json` zu einem Markdown-Bericht.
+- **`CLAUDE.md`** – Anweisungen für die Claude-Läufe.
+
+### Einrichtung (Secrets)
+
+| Secret | Wofür |
+|--------|-------|
+| `KICKTIPP_TOKEN` | Login-Cookie (`kicktippbb.py --get-login-token`). |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude-Abo-Token (`claude setup-token`, Pro/Max). Nutzt das Abo statt API-Guthaben. |
+
+Außerdem nötig: GitHub Issues aktiviert und ein Label `betbot-report` (das Bericht-Issue
+wird sonst automatisch angelegt).
+
 Getting started
 ---------------
 

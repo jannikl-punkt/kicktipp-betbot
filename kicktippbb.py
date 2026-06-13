@@ -29,6 +29,7 @@ import sys
 import datetime
 import getpass
 import re
+from urllib.parse import urlparse
 
 from docopt import docopt
 from robobrowser import RoboBrowser
@@ -104,23 +105,48 @@ def parse_match_rows(browser: RoboBrowser, community, matchday = None):
     matchtuple = list()
     lastmatch = None
     for row in rows:
-        heimtipp = row[3].find(
-            'input', id=lambda x: x and x.endswith('_heimTipp'))
-        gasttipp = row[3].find(
-            'input', id=lambda x: x and x.endswith('_gastTipp'))
-        try:
-            odds=[odd.replace(" ","") for odd in row[4].get_text().split("/")]
-            match = Match(row[1].get_text(), row[2].get_text(), row[0].get_text(
-            ), odds[0], odds[1], odds[2])
-        except:
-            print("Error: Not enough data, maybe there are no rates yet.")
-            sys.exit()
+        # Search all cells: the tipp column position varies between community types
+        # (result communities: col 3; 1X2/Tendenz communities: col 4).
+        heimtipp = next(
+            (cell.find('input', id=lambda x: x and x.endswith('_heimTipp'))
+             for cell in row
+             if cell.find('input', id=lambda x: x and x.endswith('_heimTipp'))),
+            None)
+        gasttipp = next(
+            (cell.find('input', id=lambda x: x and x.endswith('_gastTipp'))
+             for cell in row
+             if cell.find('input', id=lambda x: x and x.endswith('_gastTipp'))),
+            None)
+        rate_home, rate_deuce, rate_road = parse_odds(row)
+        match = Match(row[1].get_text(), row[2].get_text(),
+                      row[0].get_text(), rate_home, rate_deuce, rate_road)
         if not match.match_date:
             match.match_date = lastmatch.match_date
         lastmatch = match
         matchtuple.append((heimtipp, gasttipp, match))
 
     return matchtuple
+
+
+def parse_odds(row):
+    """Extract the three betting odds (home/draw/road) from a match row.
+
+    Kicktipp renders odds as <span class="quote-text"> elements inside the
+    odds column. Some communities (e.g. tournament rounds like the World Cup)
+    provide no odds at all. Odds are only consumed by the CalculationPredictor,
+    so when they are missing or unparseable we return neutral values instead of
+    aborting, which keeps the FixedPredictor working everywhere.
+    """
+    quotes = [span.get_text(strip=True)
+              for cell in row
+              for span in cell.find_all('span', class_='quote-text')]
+    if len(quotes) >= 3:
+        try:
+            float(quotes[0]), float(quotes[1]), float(quotes[2])
+            return quotes[0], quotes[1], quotes[2]
+        except ValueError:
+            pass
+    return "0", "0", "0"
 
 def get_tippabgabe_url(community, matchday = None):
     tippabgabeurl = URL_BASE + '/' + community + '/tippabgabe'
@@ -150,17 +176,27 @@ def get_communities(browser: RoboBrowser, desired_communities: list):
     browser.open(URL_BASE + '/info/profil/meinetipprunden')
     content = get_kicktipp_content(browser)
     links = content.find_all('a')
-    def gethreftext(link): return link.get('href').replace("/", "")
 
-    def is_community(link):
-        hreftext = gethreftext(link)
-        if hreftext == link.get_text():
-            return True
-        else:
-            linkdiv = link.find('div', {'class': "menu-title-mit-tippglocke"})
-            return linkdiv and linkdiv.get_text() == hreftext
-    community_list = [gethreftext(link)
-                      for link in links if is_community(link)]
+    _SYSTEM_SLUGS = {'info', 'favicon.ico'}
+
+    def _community_slug(link):
+        """Return the community slug if this link points to a community root page, else ''."""
+        href = link.get('href') or ''
+        # Skip non-HTTP hrefs: javascript:, mailto:, #anchors, empty
+        if not (href.startswith('/') or href.startswith('http://') or href.startswith('https://')):
+            return ''
+        path = urlparse(href).path          # handles relative /slug/ and absolute http(s)://…/slug/
+        parts = [p for p in path.split('/') if p]
+        # Community root links have exactly one path segment; /info/profil/… has more
+        if len(parts) != 1:
+            return ''
+        return '' if parts[0] in _SYSTEM_SLUGS else parts[0]
+
+    community_list = []
+    for link in links:
+        slug = _community_slug(link)
+        if slug and slug not in community_list:
+            community_list.append(slug)
     if len(desired_communities) > 0:
         return intersection(community_list, desired_communities)
     return community_list
@@ -178,15 +214,19 @@ def place_bets(browser: RoboBrowser, communities: list, predictor, override=Fals
         matches = parse_match_rows(browser, com, matchday)
         submitform = browser.get_form()
         for field_hometeam, field_roadteam, match in matches:
-            if not field_hometeam or not field_roadteam:
+            if not field_hometeam:
                 print("{0} - no bets possible".format(match))
                 continue
 
+            is_tendency = field_roadteam is None  # 1X2 mode: only one tipp field
+
             input_hometeam_value = submitform[field_hometeam.attrs['name']].value
-            input_roadteam_value = submitform[field_roadteam.attrs['name']].value
+            input_roadteam_value = (submitform[field_roadteam.attrs['name']].value
+                                    if not is_tendency else None)
             if not override and (input_hometeam_value or input_roadteam_value):
-                print("{0} - skipped, already placed {1}:{2}".format(match,
-                                                                     input_hometeam_value, input_roadteam_value))
+                placed = input_hometeam_value if is_tendency else "{0}:{1}".format(
+                    input_hometeam_value, input_roadteam_value)
+                print("{0} - skipped, already placed {1}".format(match, placed))
                 continue
 
             if deadline is not None:
@@ -197,9 +237,15 @@ def place_bets(browser: RoboBrowser, communities: list, predictor, override=Fals
                     continue
 
             homebet, roadbet = predictor.predict(match)
-            print("{0} - betting {1}:{2}".format(match, homebet, roadbet))
-            submitform[field_hometeam.attrs['name']] = str(homebet)
-            submitform[field_roadteam.attrs['name']] = str(roadbet)
+            if is_tendency:
+                # Derive 1X2 tendency from predicted score
+                tendency = '1' if homebet > roadbet else ('X' if homebet == roadbet else '2')
+                print("{0} - betting {1} (from {2}:{3})".format(match, tendency, homebet, roadbet))
+                submitform[field_hometeam.attrs['name']] = tendency
+            else:
+                print("{0} - betting {1}:{2}".format(match, homebet, roadbet))
+                submitform[field_hometeam.attrs['name']] = str(homebet)
+                submitform[field_roadteam.attrs['name']] = str(roadbet)
         if not dryrun:
             browser.submit_form(submitform, submit='submitbutton')
         else:
