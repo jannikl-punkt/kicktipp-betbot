@@ -1,0 +1,100 @@
+name: Betbot – Spieltag-Zusammenfassung
+
+# Läuft täglich nach Abpfiff der Abendspiele (0:30 CEST / 22:30 UTC).
+# Claude ruft die kicktipp-Ergebnisseiten auf, vergleicht mit den Bot-Tipps
+# und postet eine Zusammenfassung ins betbot-report Issue.
+# Manuell per workflow_dispatch ausführbar (z. B. für frühzeitige Gruppen-Updates).
+on:
+  schedule:
+    - cron: "30 22 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+jobs:
+  results-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Gate (reines Python): Gibt es Communities? Falls Login-Fehler → abbrechen.
+      - id: gate
+        name: Gate – Communities prüfen
+        env:
+          KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
+        run: |
+          set -o pipefail
+          OUT=$(python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" \
+                  --predictor FixedPredictor 2>&1) || { echo "$OUT"; exit 1; }
+          # Mindestens eine Community gefunden?
+          COMMS=$(echo "$OUT" | awk '/^Community: /{print $2}' | tr "\n" " " | sed "s/ *$//")
+          if [ -n "$COMMS" ]; then
+            echo "work=true"  >> "$GITHUB_OUTPUT"
+            echo "communities=$COMMS" >> "$GITHUB_OUTPUT"
+          else
+            echo "work=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Keine Communities gefunden – Zusammenfassung wird übersprungen."
+          fi
+
+      # Claude: Ergebnisseiten abrufen, Zusammenfassung erstellen, ins Issue posten.
+      - if: steps.gate.outputs.work == 'true'
+        name: Spieltag-Zusammenfassung erstellen und posten
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Erstelle eine Spieltag-Zusammenfassung und poste sie als Kommentar im betbot-report Issue.
+            Betroffene Communities: ${{ steps.gate.outputs.communities }}
+
+            Vorgehensweise:
+            1. Aktuelle Tipps/Spielstand ermitteln (Dry-Run):
+               python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor
+
+            2. Für jede Community: Ergebnisseite des aktuellen/letzten Spieltags abrufen.
+               Kicktipp-Ergebnisse sind unter http://www.kicktipp.de/{community}/ sichtbar.
+               Nutze Python mit dem Login-Cookie um die Seite zu holen:
+               ```python
+               import requests
+               from bs4 import BeautifulSoup
+               import os
+               r = requests.get("http://www.kicktipp.de/{community}/",
+                                cookies={"login": os.environ["KICKTIPP_TOKEN"]})
+               soup = BeautifulSoup(r.text, "html5lib")
+               # Hier Ergebnisse parsen
+               ```
+               Alternativ: curl -s -b "login=$KICKTIPP_TOKEN" http://www.kicktipp.de/{community}/
+
+            3. Ermittle aus der Seite:
+               - Spieltag-Nummer und Datum
+               - Für jedes Spiel: Heimteam, Auswärtsteam, Ergebnis (falls Spiel gelaufen)
+               - Bot-Tipp (aus predictions.json falls vorhanden)
+               - Punkte/Trefferquote falls sichtbar
+
+            4. Erstelle eine Markdown-Zusammenfassung. Falls noch keine Ergebnisse vorliegen
+               (Spieltag noch nicht abgepfiffen), schreibe das kurz und poste nichts.
+
+            5. Issue-Nummer finden und Kommentar posten:
+               ISSUE=$(gh issue list --label betbot-report --state all --json number \
+                         --jq '.[0].number // empty')
+               if [ -z "$ISSUE" ]; then
+                 URL=$(gh issue create --title "🤖 Betbot Tagesberichte" --label betbot-report \
+                         --body "Automatische Tipp-Berichte des Betbots.")
+                 ISSUE=$(basename "$URL")
+               fi
+               gh issue comment "$ISSUE" --body "<zusammenfassung>"
+
+            Wichtig: Nur posten wenn tatsächlich Ergebnisse vorliegen. Kein leerer Kommentar.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
+        env:
+          KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
+          GH_TOKEN: ${{ github.token }}

@@ -15,6 +15,7 @@ predictions.json       – Tipps (Laufzeit-Artefakt, nicht eingecheckt)
 .github/workflows/
   betbot-auto.yml      – Auto-Tipps ~2h vor Anstoß (Heartbeat)
   betbot-fallback.yml  – Fallback ~30 Min vor Anstoß (Heartbeat)
+  betbot-results.yml   – Tägliche Spieltag-Zusammenfassung mit Ergebnissen
   betbot-interactive.yml – @claude-Kommentare im Issue
 ```
 
@@ -108,11 +109,23 @@ frischer Recherche (Aufstellungen/News sind dann aktueller als morgens).
 
 ## GitHub Actions: Fallback (`betbot-fallback.yml`)
 
-Heartbeat alle 15 Min, nur `acmilfhunters172` und `svawm`. Springt **~30 Min vor
-Anstoß** ein (Fenster 40m als Jitter-Puffer) und tippt **nur**, wo Jannik noch
-keinen Tipp gesetzt hat (**kein** `--override-bets`).
+Heartbeat alle 15 Min, nur die Fallback-Communities (definiert in `FALLBACK_COMMUNITIES`
+env-Variable im Workflow). Springt **~30 Min vor Anstoß** ein (Fenster 40m als
+Jitter-Puffer) und tippt **nur**, wo Jannik noch keinen Tipp gesetzt hat (**kein**
+`--override-bets`).
 
 Gleicher 4-Schritt-Ablauf wie oben, aber Deadline `40m` und feste Community-Liste.
+
+## GitHub Actions: Spieltag-Zusammenfassung (`betbot-results.yml`)
+
+Läuft täglich um 0:30 CEST (22:30 UTC). Claude ruft die kicktipp-Ergebnisseiten
+auf, vergleicht mit den Bot-Tipps (predictions.json) und postet eine
+Zusammenfassung ins `betbot-report`-Issue.
+
+- Ergebnisseite einer Community: `http://www.kicktipp.de/{community}/`
+- Login per Cookie: `requests.get(..., cookies={"login": os.environ["KICKTIPP_TOKEN"]})`
+- Nur posten wenn tatsächlich Ergebnisse vorliegen (kein leerer Kommentar).
+- Manuell per workflow_dispatch auslösbar.
 
 ---
 
