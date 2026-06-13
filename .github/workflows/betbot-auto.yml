@@ -1,13 +1,13 @@
-name: Betbot – Fallback (~30 Min vor Anstoß, nur acmilfhunters172 & svawm)
+name: Betbot – Auto-Tipps (~2h vor Anstoß)
 
-# Gleiche Heartbeat-Architektur wie betbot-auto, aber nur für die Gruppen, in
-# denen Jannik selbst tippt. Der Bot springt nur ein, wenn ~30 Min vor Anstoß
-# noch kein Tipp gesetzt ist (kein --override). Claude läuft nur bei Bedarf.
+# Heartbeat-Architektur: ein günstiger Cron-Tick prüft per reinem Python, ob ein
+# Spiel ins 2h-Fenster rutscht. Claude (Abo-Token) läuft NUR dann und macht NUR
+# die Recherche → predictions.json. Tippen und Report sind hart gescriptet.
 on:
   schedule:
-    # alle 15 Min (Offset). 40m-Fenster puffert Cron-Jitter, sodass zuverlässig
-    # ~25–40 Min vor Anstoß getippt wird.
-    - cron: "9,24,39,54 * * * *"
+    # alle 30 Min (Offset, nicht :00 wegen GitHub-Cron-Stau). 2h-Fenster ist
+    # robust gegen Cron-Verzögerungen; Tipps landen ~1,5–2h vor Anstoß.
+    - cron: "4,34 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,11 +15,8 @@ permissions:
   issues: write
   id-token: write
 
-env:
-  FALLBACK_COMMUNITIES: "acmilfhunters172 svawm"
-
 jobs:
-  fallback-bet:
+  auto-bet:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,32 +26,33 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 1) GATE (reines Python): Hat eine der Fallback-Gruppen ein ungetipptes
-      #    Spiel in den nächsten ~40 Min?
+      # 1) GATE (reines Python, KEIN Claude): Welche Auto-Communities haben ein
+      #    tippbares, noch ungetipptes Spiel in den nächsten 2h? Fallback-Gruppen
+      #    werden ausgeschlossen.
       - id: gate
-        name: Gate – offene Spiele im 40m-Fenster finden
+        name: Gate – offene Spiele im 2h-Fenster finden
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
         run: |
           set -o pipefail
           OUT=$(python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" \
-                  --predictor FixedPredictor --deadline 40m $FALLBACK_COMMUNITIES) \
-                  || { echo "$OUT"; exit 1; }
+                  --predictor FixedPredictor --deadline 2h) || { echo "$OUT"; exit 1; }
           echo "$OUT"
           COMMS=$(echo "$OUT" | awk '
             /^Community: /{c=$2; next}
-            / - betting [0-9X]/{ if (!seen[c]++) print c }
+            / - betting [0-9X]/{ if (c!="acmilfhunters172" && c!="svawm" && !seen[c]++) print c }
           ' | tr "\n" " " | sed "s/ *$//")
           echo "communities=$COMMS" >> "$GITHUB_OUTPUT"
           if [ -n "$COMMS" ]; then
             echo "work=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Fallback fällig für: $COMMS"
+            echo "::notice::Auto-Tipps fällig für: $COMMS"
           else
             echo "work=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Nichts zu tun – Claude wird nicht gestartet."
+            echo "::notice::Keine offenen Spiele im 2h-Fenster – Claude wird nicht gestartet."
           fi
 
-      # 2) RECHERCHE (Claude/Abo, nur wenn Arbeit): schreibt nur predictions.json.
+      # 2) RECHERCHE (Claude/Abo, NUR wenn Arbeit): schreibt ausschließlich
+      #    predictions.json. Kein Tippen, kein Posten, kein git.
       - if: steps.gate.outputs.work == 'true'
         name: Recherche – predictions.json schreiben
         uses: anthropics/claude-code-action@v1
@@ -65,35 +63,34 @@ jobs:
             Betroffene Communities: ${{ steps.gate.outputs.communities }}
 
             1. Spiele/Teamnamen ansehen:
-               python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor --deadline 40m ${{ steps.gate.outputs.communities }}
-            2. Für jedes mit "betting" markierte Spiel: schnelle Web-Recherche
-               (aktuelle Form, Aufstellung; WM 2026 beachten).
+               python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor --deadline 2h ${{ steps.gate.outputs.communities }}
+            2. Für jedes mit "betting" markierte Spiel: kurze Web-Recherche
+               (aktuelle Form, Verletzungen, Aufstellung, Head-to-Head; WM 2026 beachten).
             3. Schreibe predictions.json im Format:
                { "Heim - Gast": {"tip": [heim_tore, gast_tore], "reason": "max. 1 Satz"} }
-               Teamnamen EXAKT wie im Dry-Run-Output. Nur die betroffenen Spiele.
+               Teamnamen EXAKT wie im Dry-Run-Output. Nur die betroffenen Spiele aufnehmen.
           claude_args: |
-            --max-turns 20
+            --max-turns 25
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
 
-      # 3) TIPPEN (reines Python): platziert nur, wo noch kein Tipp existiert
-      #    (KEIN --override – Janniks eigene Tipps bleiben unangetastet).
+      # 3) TIPPEN (reines Python): platziert die recherchierten Tipps.
       - if: steps.gate.outputs.work == 'true'
         name: Tipps platzieren
         env:
           KICKTIPP_TOKEN: ${{ secrets.KICKTIPP_TOKEN }}
         run: |
           python kicktippbb.py --use-login-token "$KICKTIPP_TOKEN" \
-            --predictor FixedPredictor --deadline 40m ${{ steps.gate.outputs.communities }}
+            --predictor FixedPredictor --deadline 2h ${{ steps.gate.outputs.communities }}
 
-      # 4) REPORT (reines Bash/gh).
+      # 4) REPORT (reines Bash/gh): Kommentar aus predictions.json.
       - if: steps.gate.outputs.work == 'true'
         name: Report posten
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          BODY=$(python betbot_report.py "Fallback-Tipps")
+          BODY=$(python betbot_report.py "Auto-Tipps")
           ISSUE=$(gh issue list --label betbot-report --state all --json number --jq '.[0].number // empty')
           if [ -z "$ISSUE" ]; then
             URL=$(gh issue create --title "🤖 Betbot Tagesberichte" --label betbot-report \

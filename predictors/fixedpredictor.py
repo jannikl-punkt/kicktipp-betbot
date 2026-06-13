@@ -6,7 +6,13 @@ from .calculationpredictor import CalculationPredictor
 
 
 class FixedPredictor(PredictorBase):
-    """Reads predictions from predictions.json, falls back to CalculationPredictor."""
+    """Reads predictions from predictions.json, falls back to CalculationPredictor.
+
+    Two value formats per match key are accepted:
+        "Heim - Gast": [2, 1]
+        "Heim - Gast": {"tip": [2, 1], "reason": "kurze Begruendung"}
+    The reason (if present) is ignored for prediction and only used by the report.
+    """
 
     PREDICTIONS_FILE = "predictions.json"
 
@@ -17,10 +23,17 @@ class FixedPredictor(PredictorBase):
             with open(self.PREDICTIONS_FILE, encoding="utf-8") as f:
                 self._predictions = json.load(f)
 
+    @staticmethod
+    def _goals(value):
+        """Extract [home, road] from either a bare list or a {"tip": [...]} dict."""
+        if isinstance(value, dict):
+            return value["tip"]
+        return value
+
     def predict(self, match: Match):
         key = f"{match.hometeam} - {match.roadteam}"
         if key in self._predictions:
-            goals = self._predictions[key]
+            goals = self._goals(self._predictions[key])
             return (int(goals[0]), int(goals[1]))
         print(f"  [FixedPredictor] '{key}' nicht in predictions.json, nutze CalculationPredictor")
         return self._fallback.predict(match)
