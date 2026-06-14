@@ -15,8 +15,11 @@ permissions:
   issues: write
   id-token: write
 
+# TZ=Europe/Berlin: kicktipp zeigt Zeiten in CEST; ohne TZ-Fix würde datetime.now()
+# UTC zurückgeben → 2h Offset → Deadline-Fenster startet erst bei Anstoß statt davor.
 env:
   FALLBACK_COMMUNITIES: "acmilfhunters172 svawm"
+  TZ: "Europe/Berlin"
 
 jobs:
   fallback-bet:
@@ -64,13 +67,20 @@ jobs:
             Reiner Recherche-Auftrag. NICHT tippen, NICHTS auf GitHub posten, kein git.
             Betroffene Communities: ${{ steps.gate.outputs.communities }}
 
-            1. Spiele/Teamnamen ansehen:
+            1. Spiele/Teamnamen ansehen (Dry-Run):
                python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor --deadline 40m ${{ steps.gate.outputs.communities }}
-            2. Für jedes mit "betting" markierte Spiel: schnelle Web-Recherche
+               → Notiere alle Zeilen mit "- betting". Das ERSTE Team ist HEIMTEAM, das zweite AUSWÄRTSTEAM.
+
+            2. Für jedes "betting"-Spiel: schnelle Web-Recherche
                (aktuelle Form, Aufstellung; WM 2026 beachten).
-            3. Schreibe predictions.json im Format:
-               { "Heim - Gast": {"tip": [heim_tore, gast_tore], "reason": "max. 1 Satz"} }
-               Teamnamen EXAKT wie im Dry-Run-Output. Nur die betroffenen Spiele.
+
+            3. Schreibe predictions.json – KRITISCH: Tore-Reihenfolge [heim_tore, gast_tore]:
+               {
+                 "Heimteam - Auswärtsteam": {"tip": [HEIM_TORE, GAST_TORE], "reason": "max. 1 Satz"}
+               }
+               ⚠️  [HEIM_TORE, GAST_TORE] = erst Heimtore, dann Gasttore.
+               Beispiel: Deutschland (Heim) gewinnt 3:1 → "tip": [3, 1]  (NICHT [1, 3]!)
+               Teamnamen EXAKT wie im Dry-Run-Output. Nur die "betting"-Spiele aufnehmen.
           claude_args: |
             --max-turns 20
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"

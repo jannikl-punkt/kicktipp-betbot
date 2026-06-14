@@ -19,7 +19,10 @@ def to_timedelta(tdstr: str):
     return deltas.get(incmatch.group(2))*int(incmatch.group(1))
 
 
-def is_before_dealine(deltatodeadline: str, deadline: dt.datetime, now=dt.datetime.now()):
+def is_before_dealine(deltatodeadline: str, deadline: dt.datetime, now=None):
+    # Default evaluated here, not at import-time (avoids frozen-clock bug).
+    if now is None:
+        now = dt.datetime.now()
     delta = to_timedelta(deltatodeadline)
     return now <= deadline and deadline - now <= delta
 
