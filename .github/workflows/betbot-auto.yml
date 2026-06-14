@@ -17,8 +17,11 @@ permissions:
 
 # Fallback-Gruppen werden beim Auto-Tippen AUSGESCHLOSSEN (die tippen via betbot-fallback.yml).
 # Muss synchron mit dem FALLBACK_COMMUNITIES env in betbot-fallback.yml gehalten werden.
+# TZ=Europe/Berlin: kicktipp zeigt Zeiten in CEST; datetime.now() auf dem Ubuntu-Runner
+# wäre sonst UTC → 2h Offset → Deadline-Fenster startet erst bei Anstoß statt davor.
 env:
   FALLBACK_COMMUNITIES: "acmilfhunters172 svawm"
+  TZ: "Europe/Berlin"
 
 jobs:
   auto-bet:
@@ -68,13 +71,22 @@ jobs:
             Reiner Recherche-Auftrag. NICHT tippen, NICHTS auf GitHub posten, kein git.
             Betroffene Communities: ${{ steps.gate.outputs.communities }}
 
-            1. Spiele/Teamnamen ansehen:
+            1. Spiele/Teamnamen ansehen (Dry-Run):
                python kicktippbb.py --dry-run --use-login-token "$KICKTIPP_TOKEN" --predictor FixedPredictor --deadline 2h ${{ steps.gate.outputs.communities }}
-            2. Für jedes mit "betting" markierte Spiel: kurze Web-Recherche
+               → Notiere alle Zeilen mit "- betting", z.B. "'Deutschland' vs. 'Curaçao' - betting 1:0"
+                 Das ERSTE Team ('Deutschland') ist HEIMTEAM, das zweite ('Curaçao') ist AUSWÄRTSTEAM.
+
+            2. Für jedes "betting"-Spiel: kurze Web-Recherche
                (aktuelle Form, Verletzungen, Aufstellung, Head-to-Head; WM 2026 beachten).
-            3. Schreibe predictions.json im Format:
-               { "Heim - Gast": {"tip": [heim_tore, gast_tore], "reason": "max. 1 Satz"} }
-               Teamnamen EXAKT wie im Dry-Run-Output. Nur die betroffenen Spiele aufnehmen.
+
+            3. Schreibe predictions.json – KRITISCH: Tore-Reihenfolge [heim_tore, gast_tore]:
+               {
+                 "Heimteam - Auswärtsteam": {"tip": [HEIM_TORE, GAST_TORE], "reason": "max. 1 Satz"}
+               }
+               ⚠️  [HEIM_TORE, GAST_TORE] = erst Heimtore, dann Gasttore.
+               Beispiel: Deutschland (Heim) gewinnt 3:1 → "tip": [3, 1]  (NICHT [1, 3]!)
+               Teamnamen EXAKT wie im Dry-Run-Output (Groß-/Kleinschreibung, Sonderzeichen).
+               Nur die "betting"-Spiele aufnehmen, keine bereits gesetzten ("skipped").
           claude_args: |
             --max-turns 25
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch"
